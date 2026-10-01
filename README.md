@@ -1,6 +1,6 @@
 # kalshi-btc-bot
 
-Read-only data logger for Kalshi's `KXBTC15M` (Bitcoin up/down, 15 min) markets, plus the tooling
+Read-only data logger for markets, plus the tooling
 to run it on a VPS and an AI "liaison" agent that manages the code between the VPS and GitHub.
 
 **Status: logging only. Nothing here places orders.** The goal is to collect enough data (BRTI ticks,
