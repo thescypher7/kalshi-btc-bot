@@ -1,0 +1,3 @@
+# Installed ONCE by setup_vps.sh to /etc/sudoers.d/kalshi-deployer (mode 440).
+# The deployer user may restart the logger and nothing else. Deliberately not auto-updated from the repo.
+deployer ALL=(root) NOPASSWD: /usr/bin/systemctl restart kalshi-logger.service

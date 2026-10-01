@@ -1,0 +1,10 @@
+[Unit]
+Description=Poll GitHub for new kalshi-btc-bot commits on main
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=2min
+AccuracySec=15s
+
+[Install]
+WantedBy=timers.target

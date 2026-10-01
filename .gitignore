@@ -1,0 +1,22 @@
+# Secrets: never commit these
+*.pem
+*.key
+.env
+.env.*
+!.env.example
+
+# Logged data and local state
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+*.db
+
+# Python
+__pycache__/
+*.pyc
+venv/
+.venv/
+.pytest_cache/
+
+# Personal Claude Code overrides (shared rules in .claude/settings.json ARE committed)
+.claude/settings.local.json

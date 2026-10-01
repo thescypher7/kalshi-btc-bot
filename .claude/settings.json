@@ -1,0 +1,55 @@
+{
+  "permissions": {
+    "allow": [
+      "Read",
+      "Edit",
+      "Write",
+      "Bash(pytest *)",
+      "Bash(python -m pytest *)",
+      "Bash(git status*)",
+      "Bash(git diff*)",
+      "Bash(git log*)",
+      "Bash(git fetch*)",
+      "Bash(git checkout -b liaison/*)",
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(git push origin liaison/*)",
+      "Bash(systemctl status kalshi-logger*)",
+      "Bash(systemctl is-active kalshi-logger*)",
+      "Bash(journalctl -u kalshi-logger*)",
+      "Bash(journalctl -t kalshi-deploy*)",
+      "Bash(gh pr create *)",
+      "Bash(gh pr view *)",
+      "Bash(gh pr list *)"
+    ],
+    "ask": [
+      "Bash(git push *)",
+      "Bash(git merge *)",
+      "Bash(git rebase *)",
+      "Bash(git reset *)",
+      "Bash(gh pr merge *)"
+    ],
+    "deny": [
+      "Bash(sudo *)",
+      "Bash(su *)",
+      "Bash(git push --force*)",
+      "Bash(git push -f*)",
+      "Bash(git push * main*)",
+      "Bash(git push * --delete*)",
+      "Bash(rm -rf *)",
+      "Bash(curl *)",
+      "Bash(wget *)",
+      "Read(//etc/kalshi-bot/**)",
+      "Read(//opt/kalshi-bot/**)",
+      "Read(//var/lib/kalshi-bot/**)",
+      "Read(//home/deployer/**)",
+      "Read(**/*.pem)",
+      "Read(**/.env)",
+      "Edit(//etc/**)",
+      "Edit(//opt/**)",
+      "Edit(deploy/*.service)",
+      "Edit(deploy/*.timer)",
+      "Edit(deploy/sudoers-deployer)"
+    ]
+  }
+}

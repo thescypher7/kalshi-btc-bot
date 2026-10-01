@@ -1,0 +1,27 @@
+[Unit]
+Description=Kalshi KXBTC15M + BRTI logger
+After=network-online.target chrony.service
+Wants=network-online.target
+# Config and key live outside the repo; the unit won't start until they exist.
+ConditionPathExists=/etc/kalshi-bot/logger.env
+
+[Service]
+User=kalshi
+Group=kalshi
+WorkingDirectory=/opt/kalshi-bot
+EnvironmentFile=/etc/kalshi-bot/logger.env
+Environment=PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1
+ExecStart=/opt/kalshi-bot/venv/bin/python /opt/kalshi-bot/logger/kalshi_logger.py
+Restart=always
+RestartSec=5
+MemoryMax=768M
+
+# Hardening: the logger can write only to its own data directory.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/kalshi-bot
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,10 @@
+[Unit]
+Description=Pull, test and deploy kalshi-btc-bot from GitHub main
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=deployer
+Group=deployer
+ExecStart=/opt/kalshi-bot/deploy/deploy.sh
