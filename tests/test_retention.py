@@ -152,3 +152,9 @@ def test_flusher_requeues_rows_when_db_is_locked(tmp_path):
 
     s = asyncio.run(go())
     assert s.db.execute("SELECT COUNT(*) FROM raw").fetchone()[0] == 1   # retried once, stored exactly once
+
+
+def test_resolve_archive_dir_follows_db_argument(monkeypatch):
+    monkeypatch.delenv("ARCHIVE_DIR", raising=False)
+    assert rt.resolve_archive_dir("/var/lib/kalshi-bot/k.sqlite") == Path("/var/lib/kalshi-bot/archive")
+    assert rt.resolve_archive_dir("/var/lib/kalshi-bot/k.sqlite", "/x") == Path("/x")

@@ -133,19 +133,23 @@ def run(db_path: str, archive_dir: Path, keep_hours: float, archive_days: float,
     return result
 
 
-def main() -> int:
-    db_default = os.getenv("LOG_DB", "kalshi_log.sqlite")
+def resolve_archive_dir(db_path: str, archive_dir: str | None = None) -> Path:
+    """--archive-dir wins, then $ARCHIVE_DIR, then an `archive` folder next to the database file."""
+    return Path(archive_dir or os.getenv("ARCHIVE_DIR") or Path(db_path).parent / "archive")
+
+
+def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--db", default=db_default)
-    ap.add_argument("--archive-dir", default=os.getenv("ARCHIVE_DIR") or str(Path(db_default).parent / "archive"))
+    ap.add_argument("--db", default=os.getenv("LOG_DB", "kalshi_log.sqlite"))
+    ap.add_argument("--archive-dir", default=None, help="default: an 'archive' folder next to --db")
     ap.add_argument("--keep-hours", type=float, default=float(os.getenv("KEEP_HOURS", 6)))
     ap.add_argument("--archive-days", type=float, default=float(os.getenv("ARCHIVE_DAYS", 7)))
     ap.add_argument("--min-free-gb", type=float, default=float(os.getenv("MIN_FREE_GB", 8)))
     ap.add_argument("--batch", type=int, default=50000)
     ap.add_argument("--dry-run", action="store_true", help="only count rows that would be archived")
-    a = ap.parse_args()
+    a = ap.parse_args(argv)
     t0 = time.time()
-    res = run(a.db, Path(a.archive_dir), a.keep_hours, a.archive_days, a.min_free_gb, a.batch,
+    res = run(a.db, resolve_archive_dir(a.db, a.archive_dir), a.keep_hours, a.archive_days, a.min_free_gb, a.batch,
               dry_run=a.dry_run)
     log(f"{'would move' if a.dry_run else 'moved'} {res['moved']} rows, pruned {res['pruned']} archive files "
         f"in {time.time() - t0:.1f}s")

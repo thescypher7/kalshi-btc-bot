@@ -101,7 +101,7 @@ recomputes both from our logged ticks (live DB plus archives) and compares them 
 know the data is trustworthy before measuring any edge:
 ```
 sudo -u kalshi /opt/kalshi-bot/venv/bin/python /opt/kalshi-bot/analysis/validate_settlements.py \
-  --db /var/lib/kalshi-bot/kalshi_log.sqlite --csv /tmp/validation.csv
+  --db /var/lib/kalshi-bot/kalshi_log.sqlite --csv /tmp/validation.csv   # archives are read from the archive/ folder next to the DB
 ```
 
 ## Limits to know about
