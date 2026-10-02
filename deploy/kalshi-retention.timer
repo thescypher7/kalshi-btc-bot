@@ -1,0 +1,10 @@
+[Unit]
+Description=Hourly archive and trim of the kalshi-logger database
+
+[Timer]
+OnCalendar=hourly
+Persistent=true
+RandomizedDelaySec=120
+
+[Install]
+WantedBy=timers.target
