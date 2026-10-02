@@ -174,14 +174,24 @@ def summarize(rows: list[dict]) -> str:
     return "\n".join(out)
 
 
-def main() -> int:
-    db_default = os.getenv("LOG_DB", "kalshi_log.sqlite")
+def resolve_archive_dir(db_path: str, archive_dir: str | None = None) -> Path:
+    """--archive-dir wins, then $ARCHIVE_DIR, then an `archive` folder next to the database file."""
+    return Path(archive_dir or os.getenv("ARCHIVE_DIR") or Path(db_path).parent / "archive")
+
+
+def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--db", default=db_default)
-    ap.add_argument("--archive-dir", default=os.getenv("ARCHIVE_DIR") or str(Path(db_default).parent / "archive"))
+    ap.add_argument("--db", default=os.getenv("LOG_DB", "kalshi_log.sqlite"))
+    ap.add_argument("--archive-dir", default=None, help="default: an 'archive' folder next to --db")
     ap.add_argument("--csv", help="also write one row per market to this file")
-    a = ap.parse_args()
-    rows = validate(a.db, Path(a.archive_dir))
+    a = ap.parse_args(argv)
+    archive = resolve_archive_dir(a.db, a.archive_dir)
+    n_raw, n_brti = len(archive_files(archive, "raw")), len(archive_files(archive, "brti"))
+    print(f"Read: {a.db} + {n_raw} raw / {n_brti} brti archive files in {archive}")
+    if not archive.is_dir() or not (n_raw or n_brti):
+        print(f"WARNING: no archive files found in {archive}; only the live database was checked, "
+              f"so older markets are missing and their windows will look incomplete.", file=sys.stderr)
+    rows = validate(a.db, archive)
     print(summarize(rows))
     if a.csv and rows:
         with open(a.csv, "w", newline="") as f:

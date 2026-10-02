@@ -2,6 +2,7 @@
 import gzip
 import json
 from datetime import datetime, timezone
+from pathlib import Path
 
 import kalshi_logger as kl
 import validate_settlements as vs
@@ -122,3 +123,32 @@ def test_no_settled_markets(tmp_path):
     s.db.close()
     assert vs.validate(str(tmp_path / "e.sqlite"), tmp_path / "none") == []
     assert "No settled markets" in vs.summarize([])
+
+
+# ---------- command line: the archive folder must follow --db (regression: it used to follow $LOG_DB only) ----------
+def test_cli_finds_archive_next_to_db_without_env_vars(tmp_path, monkeypatch, capsys):
+    monkeypatch.delenv("ARCHIVE_DIR", raising=False)
+    monkeypatch.delenv("LOG_DB", raising=False)
+    monkeypatch.chdir(tmp_path.parent)                      # a cwd with no ./archive, like running from /root
+    db, _ = build(tmp_path)
+    assert vs.main(["--db", db]) == 0
+    out = capsys.readouterr()
+    assert "Settled markets checked: 2" in out.out          # T-A exists ONLY in the archive, so this proves it was read
+    assert "1 raw / 1 brti archive files" in out.out
+    assert "WARNING" not in out.err
+
+
+def test_cli_warns_when_no_archive_files_found(tmp_path, monkeypatch, capsys):
+    monkeypatch.delenv("ARCHIVE_DIR", raising=False)
+    s = kl.Store(str(tmp_path / "x.sqlite"))
+    s.db.close()
+    vs.main(["--db", str(tmp_path / "x.sqlite")])
+    assert "WARNING: no archive files found" in capsys.readouterr().err
+
+
+def test_resolve_archive_dir_precedence(monkeypatch):
+    monkeypatch.delenv("ARCHIVE_DIR", raising=False)
+    assert vs.resolve_archive_dir("/data/x.sqlite") == Path("/data/archive")
+    monkeypatch.setenv("ARCHIVE_DIR", "/env/arch")
+    assert vs.resolve_archive_dir("/data/x.sqlite") == Path("/env/arch")
+    assert vs.resolve_archive_dir("/data/x.sqlite", "/cli/arch") == Path("/cli/arch")
