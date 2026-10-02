@@ -8,6 +8,7 @@ Kalshi order books and settlements) to measure whether any edge survives fees be
 
 ```
 logger/kalshi_logger.py   async websocket logger -> SQLite (tables: raw, brti)
+logger/retention.py       hourly job: archives old rows to gzip, keeps the live DB small
 tests/                    offline tests (no network, no credentials)
 deploy/                   systemd units, deploy script, one-time VPS setup
 CLAUDE.md                 standing rules for the liaison agent
@@ -82,6 +83,15 @@ The repo's `CLAUDE.md` and `.claude/settings.json` load automatically.
 agent may be sluggish or get OOM-killed (`MemoryMax` on the logger protects it; the swapfile helps).
 If that bites, run the agent on your own computer instead (same repo, same rules), or upsize the VPS
 to 4 GB only when you need it.
+
+## Storage and retention
+The order-book feed is about 12 GB/day of raw rows. `kalshi-retention.timer` runs `logger/retention.py` hourly as the
+`kalshi` user: rows older than `KEEP_HOURS` (6) move to hourly `archive/*.jsonl.gz` files (about 15x smaller, roughly
+0.7 GB/day), archives older than `ARCHIVE_DAYS` (7) are deleted, and the oldest go sooner if free disk falls below
+`MIN_FREE_GB` (8). Rows are archived and fsynced before they are deleted, and each archived record carries the
+SQLite `id`, so after a crash dedupe on `(table, id)`. Set the three variables in `/etc/kalshi-bot/logger.env` to
+change them. Download `/var/lib/kalshi-bot/archive/` before the 7 days are up if you want to keep history.
+The live database file does not shrink after rows are deleted (SQLite reuses the space); it plateaus at its peak size.
 
 ## Limits to know about
 - The agent's permission rules are guardrails, not a sandbox: shell patterns can be bypassed. The real

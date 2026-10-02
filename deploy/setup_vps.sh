@@ -3,7 +3,8 @@
 #
 #   REPO_URL=git@github.com:YOURUSER/kalshi-btc-bot.git bash setup_vps.sh
 #
-# Safe to re-run. It never reads or writes your Kalshi credentials; you add those afterwards.
+# Safe to re-run (a re-run refreshes users, units and sudoers and does not ask for the deploy key again).
+# It never reads or writes your Kalshi credentials; you add those afterwards.
 # Privileged files (systemd units, sudoers) are installed here by root. The auto-deployer can
 # update code, but it cannot change what it is allowed to do as root.
 set -euo pipefail
@@ -39,21 +40,23 @@ install -d -o kalshi   -g kalshi   -m 750 /var/lib/kalshi-bot
 install -d -o root     -g kalshi   -m 750 /etc/kalshi-bot
 install -d -o deployer -g deployer -m 755 /var/lib/kalshi-deploy "$APP"
 
-echo "== read-only deploy key for user 'deployer'"
-DHOME=$(getent passwd deployer | cut -d: -f6)
-runuser -u deployer -- install -d -m 700 "$DHOME/.ssh"
-[ -f "$DHOME/.ssh/id_ed25519" ] || runuser -u deployer -- ssh-keygen -q -t ed25519 -N "" \
-  -C "kalshi-bot-deployer@$(hostname)" -f "$DHOME/.ssh/id_ed25519"
-# Trust-on-first-use for github.com. To be strict, compare against https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/githubs-ssh-key-fingerprints
-runuser -u deployer -- sh -c "ssh-keyscan -t ed25519 github.com 2>/dev/null >> '$DHOME/.ssh/known_hosts'"
+if [ ! -d "$APP/.git" ]; then
+  echo "== read-only deploy key for user 'deployer'"
+  DHOME=$(getent passwd deployer | cut -d: -f6)
+  runuser -u deployer -- install -d -m 700 "$DHOME/.ssh"
+  [ -f "$DHOME/.ssh/id_ed25519" ] || runuser -u deployer -- ssh-keygen -q -t ed25519 -N "" \
+    -C "kalshi-bot-deployer@$(hostname)" -f "$DHOME/.ssh/id_ed25519"
+  # Trust-on-first-use for github.com. To be strict, compare against https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/githubs-ssh-key-fingerprints
+  runuser -u deployer -- sh -c "ssh-keyscan -t ed25519 github.com 2>/dev/null >> '$DHOME/.ssh/known_hosts'"
 
-echo
-echo "Add this key on GitHub: repo > Settings > Deploy keys > Add deploy key."
-echo "Leave 'Allow write access' UNCHECKED."
-echo
-cat "$DHOME/.ssh/id_ed25519.pub"
-echo
-read -rp "Press Enter once the deploy key is added... " _
+  echo
+  echo "Add this key on GitHub: repo > Settings > Deploy keys > Add deploy key."
+  echo "Leave 'Allow write access' UNCHECKED."
+  echo
+  cat "$DHOME/.ssh/id_ed25519.pub"
+  echo
+  read -rp "Press Enter once the deploy key is added... " _
+fi
 
 echo "== code, virtualenv"
 if [ ! -d "$APP/.git" ]; then
@@ -65,7 +68,8 @@ runuser -u deployer -- "$APP/venv/bin/pip" install -q -r "$APP/requirements.txt"
 
 echo "== systemd units and sudoers (installed by root)"
 install -m 644 "$APP/deploy/kalshi-logger.service" "$APP/deploy/kalshi-deploy.service" \
-  "$APP/deploy/kalshi-deploy.timer" /etc/systemd/system/
+  "$APP/deploy/kalshi-deploy.timer" "$APP/deploy/kalshi-retention.service" \
+  "$APP/deploy/kalshi-retention.timer" /etc/systemd/system/
 install -m 440 "$APP/deploy/sudoers-deployer" /etc/sudoers.d/kalshi-deployer
 if ! visudo -cf /etc/sudoers.d/kalshi-deployer >/dev/null; then
   rm -f /etc/sudoers.d/kalshi-deployer
@@ -77,6 +81,7 @@ fi
 systemctl daemon-reload
 systemctl enable kalshi-logger.service >/dev/null 2>&1
 systemctl enable --now kalshi-deploy.timer >/dev/null 2>&1
+systemctl enable --now kalshi-retention.timer >/dev/null 2>&1
 
 cat <<'EOF'
 
@@ -90,6 +95,7 @@ cat <<'EOF'
  4. Watch it:          journalctl -u kalshi-logger -f
                        sqlite3 /var/lib/kalshi-bot/kalshi_log.sqlite 'select count(*) from brti'
  5. Deploy status:     systemctl list-timers kalshi-deploy.timer ; journalctl -t kalshi-deploy
+ 6. Retention status:  systemctl list-timers kalshi-retention.timer ; journalctl -u kalshi-retention --no-pager | tail
 
 The liaison agent is set up separately; see README.md.
 EOF
