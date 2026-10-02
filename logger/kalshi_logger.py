@@ -112,7 +112,7 @@ def auth_headers(method: str, path: str) -> dict:
 # ---------- storage ----------
 class Store:
     def __init__(self, path: str):
-        self.db = sqlite3.connect(path, check_same_thread=False)
+        self.db = sqlite3.connect(path, check_same_thread=False, timeout=30)
         self.db.execute("PRAGMA journal_mode=WAL")
         self.db.executescript(SCHEMA)
         self.raw: list[tuple] = []
@@ -122,16 +122,25 @@ class Store:
         self.raw.append((now_ms(), time.monotonic_ns(), src, kind, ticker, payload))
 
     def write(self, raw: list, brti: list) -> None:
-        if raw:
-            self.db.executemany("INSERT INTO raw VALUES (?,?,?,?,?,?)", raw)
-        if brti:
-            self.db.executemany("INSERT INTO brti VALUES (?,?,?,?,?,?,?,?,?,?)", brti)
-        self.db.commit()
+        try:
+            if raw:
+                self.db.executemany("INSERT INTO raw VALUES (?,?,?,?,?,?)", raw)
+            if brti:
+                self.db.executemany("INSERT INTO brti VALUES (?,?,?,?,?,?,?,?,?,?)", brti)
+            self.db.commit()
+        except sqlite3.Error:
+            self.db.rollback()   # never leave half a batch pending; the caller requeues all of it
+            raise
 
     def drain(self):
         raw, self.raw = self.raw, []
         brti, self.brti = self.brti, []
         return raw, brti
+
+    def requeue(self, raw: list, brti: list) -> None:
+        """Put rows back at the front after a failed write so they are retried, not lost."""
+        self.raw[:0] = raw
+        self.brti[:0] = brti
 
 
 def parse_brti(channel: str, recv_ms: int, d: dict) -> tuple:
@@ -155,7 +164,12 @@ def parse_brti(channel: str, recv_ms: int, d: dict) -> tuple:
 async def flusher(store: Store, stop: asyncio.Event) -> None:
     while not stop.is_set():
         await nap(stop, 1.0)
-        await asyncio.to_thread(store.write, *store.drain())
+        raw, brti = store.drain()
+        try:
+            await asyncio.to_thread(store.write, raw, brti)
+        except sqlite3.Error as e:   # e.g. "database is locked" while the retention job runs
+            store.requeue(raw, brti)
+            print(f"[logger] db write failed ({e!r}); {len(raw)} raw / {len(brti)} brti rows requeued", flush=True)
 
 
 # ---------- REST: market discovery and settlement ----------
