@@ -1,0 +1,19 @@
+[Unit]
+Description=Archive old kalshi-logger rows to gzip and trim the live database
+After=kalshi-logger.service
+
+[Service]
+Type=oneshot
+User=kalshi
+Group=kalshi
+EnvironmentFile=/etc/kalshi-bot/logger.env
+Environment=PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1
+ExecStart=/opt/kalshi-bot/venv/bin/python /opt/kalshi-bot/logger/retention.py
+TimeoutStartSec=1h
+Nice=10
+IOSchedulingClass=idle
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/kalshi-bot
