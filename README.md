@@ -9,6 +9,7 @@ Kalshi order books and settlements) to measure whether any edge survives fees be
 ```
 logger/kalshi_logger.py   async websocket logger -> SQLite (tables: raw, brti)
 logger/retention.py       hourly job: archives old rows to gzip, keeps the live DB small
+analysis/                 offline checks on the logged data (read-only)
 tests/                    offline tests (no network, no credentials)
 deploy/                   systemd units, deploy script, one-time VPS setup
 CLAUDE.md                 standing rules for the liaison agent
@@ -92,6 +93,16 @@ The order-book feed is about 12 GB/day of raw rows. `kalshi-retention.timer` run
 SQLite `id`, so after a crash dedupe on `(table, id)`. Set the three variables in `/etc/kalshi-bot/logger.env` to
 change them. Download `/var/lib/kalshi-bot/archive/` before the 7 days are up if you want to keep history.
 The live database file does not shrink after rows are deleted (SQLite reuses the space); it plateaus at its peak size.
+
+## Checking the data
+Kalshi settles a KXBTC15M market Yes when the 60 s BRTI average before close is at least the 60 s average before
+open (`floor_strike` = the opening average, `expiration_value` = the closing average). `analysis/validate_settlements.py`
+recomputes both from our logged ticks (live DB plus archives) and compares them to Kalshi's published numbers, so we
+know the data is trustworthy before measuring any edge:
+```
+sudo -u kalshi /opt/kalshi-bot/venv/bin/python /opt/kalshi-bot/analysis/validate_settlements.py \
+  --db /var/lib/kalshi-bot/kalshi_log.sqlite --csv /tmp/validation.csv
+```
 
 ## Limits to know about
 - The agent's permission rules are guardrails, not a sandbox: shell patterns can be bypassed. The real
