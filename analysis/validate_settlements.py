@@ -34,6 +34,7 @@ from statistics import mean, median
 WINDOW_MS = 60_000
 BRTI_CHANNEL = "cfbenchmarks_value"        # the 1 Hz channel; the 5 Hz one is not what Kalshi settles on
 SETTLED_KIND = "market_after_close"
+CORE_MARKER = ".core_complete"             # written by `retention.py --extract-core`; see raw_source_files
 
 
 def parse_ts(s: str) -> int:
@@ -44,6 +45,17 @@ def archive_files(archive_dir: Path, table: str):
     if not archive_dir.is_dir():
         return []
     return sorted(p for p in archive_dir.iterdir() if p.name.startswith(table + "_") and p.name.endswith(".jsonl.gz"))
+
+
+def raw_source_files(archive_dir: Path):
+    """Archive files that can hold non-order-book raw rows (ticker quotes, settlements).
+
+    core_ files hold exactly those rows. Until `retention.py --extract-core` has been run (marker present), older
+    raw_ files may still hold some too, so they are read as well: slow, but complete."""
+    core = archive_files(archive_dir, "core")
+    if (archive_dir / CORE_MARKER).exists():
+        return core
+    return sorted(core + archive_files(archive_dir, "raw"))
 
 
 def read_archive(path: Path, must_contain: str | None = None):
@@ -72,7 +84,7 @@ def load_markets(db: sqlite3.Connection, archive_dir: Path) -> dict:
 
     for ticker, payload in db.execute("SELECT ticker, payload FROM raw WHERE kind=? ORDER BY recv_ms", (SETTLED_KIND,)):
         consider(ticker, payload)
-    for p in archive_files(archive_dir, "raw"):
+    for p in raw_source_files(archive_dir):
         for rec in read_archive(p, must_contain=f'"{SETTLED_KIND}"'):
             if rec.get("kind") == SETTLED_KIND:
                 consider(rec.get("ticker"), rec.get("payload"))
@@ -186,8 +198,9 @@ def main(argv=None) -> int:
     ap.add_argument("--csv", help="also write one row per market to this file")
     a = ap.parse_args(argv)
     archive = resolve_archive_dir(a.db, a.archive_dir)
-    n_raw, n_brti = len(archive_files(archive, "raw")), len(archive_files(archive, "brti"))
-    print(f"Read: {a.db} + {n_raw} raw / {n_brti} brti archive files in {archive}")
+    n_raw, n_brti = len(raw_source_files(archive)), len(archive_files(archive, "brti"))
+    fast = " (core files only)" if (archive / CORE_MARKER).exists() else ""
+    print(f"Read: {a.db} + {n_raw} raw / {n_brti} brti archive files in {archive}{fast}")
     if not archive.is_dir() or not (n_raw or n_brti):
         print(f"WARNING: no archive files found in {archive}; only the live database was checked, "
               f"so older markets are missing and their windows will look incomplete.", file=sys.stderr)

@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import kalshi_logger as kl
+import retention as rt
 import validate_settlements as vs
 
 
@@ -152,3 +153,24 @@ def test_resolve_archive_dir_precedence(monkeypatch):
     monkeypatch.setenv("ARCHIVE_DIR", "/env/arch")
     assert vs.resolve_archive_dir("/data/x.sqlite") == Path("/env/arch")
     assert vs.resolve_archive_dir("/data/x.sqlite", "/cli/arch") == Path("/cli/arch")
+
+
+# ---------- core_ files: once the backfill marker exists, only core_ files are read for raw rows ----------
+def test_marker_switches_to_core_files_only(tmp_path):
+    db, arch = build(tmp_path)                           # T-A's settlement lives only in raw_20261001T21
+    (arch / vs.CORE_MARKER).write_text("done\n")
+    assert [r["ticker"] for r in vs.validate(db, arch)] == ["T-B"]          # raw_ ignored -> T-A not found
+    write_gz(arch / "core_20261001T21.jsonl.gz", [{"id": 11, "recv_ms": 2, "mono_ns": 2, "src": "rest", "kind": SETTLED,
+        "ticker": "T-A", "payload": json.dumps(market("2026-10-01T21:00:00Z", "2026-10-01T21:15:00Z", 100.0, 101.5, "yes"))}])
+    assert [r["ticker"] for r in vs.validate(db, arch)] == ["T-A", "T-B"]
+
+
+def test_without_marker_raw_and_core_files_are_both_read(tmp_path):
+    db, arch = build(tmp_path)
+    assert [p.name for p in vs.raw_source_files(arch)] == ["raw_20261001T21.jsonl.gz"]
+    write_gz(arch / "core_20261001T20.jsonl.gz", [])
+    assert [p.name for p in vs.raw_source_files(arch)] == ["core_20261001T20.jsonl.gz", "raw_20261001T21.jsonl.gz"]
+
+
+def test_marker_name_matches_retention():
+    assert vs.CORE_MARKER == rt.CORE_MARKER
