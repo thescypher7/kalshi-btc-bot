@@ -252,6 +252,14 @@ def main(argv=None) -> int:
     a = ap.parse_args(argv)
     t0 = time.time()
     archive = resolve_archive_dir(a.db, a.archive_dir)
+    if a.extract_core and not archive.is_dir():
+        print(f"[retention] ERROR: no archive folder at {archive}. Pass --db /var/lib/kalshi-bot/kalshi_log.sqlite "
+              f"(or --archive-dir).", file=sys.stderr)
+        return 2
+    if not a.extract_core and not Path(a.db).is_file():
+        print(f"[retention] ERROR: no database at {a.db}. Pass --db /var/lib/kalshi-bot/kalshi_log.sqlite "
+              f"(the systemd service sets it for you; a shell does not).", file=sys.stderr)
+        return 2
     if a.extract_core:
         n = extract_all(archive)
         log(f"extract-core done: {n} rows copied in {time.time() - t0:.1f}s")

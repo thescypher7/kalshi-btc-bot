@@ -98,7 +98,8 @@ SQLite `id`, so after a crash dedupe on `(table, id)`. Set the variables in `/et
 One-off backfill for archives written before `core_*` existed (and to make the analysis scripts fast, since they
 then skip the order-book files):
 ```
-sudo -u kalshi nice -n 19 /opt/kalshi-bot/venv/bin/python /opt/kalshi-bot/logger/retention.py --extract-core
+sudo -u kalshi nice -n 19 /opt/kalshi-bot/venv/bin/python /opt/kalshi-bot/logger/retention.py \
+  --db /var/lib/kalshi-bot/kalshi_log.sqlite --extract-core
 ```
 The live database file does not shrink after rows are deleted (SQLite reuses the space); it plateaus at its peak size.
 
