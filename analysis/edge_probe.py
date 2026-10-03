@@ -138,7 +138,7 @@ def load_quotes(db: sqlite3.Connection, archive_dir: Path):
             if rec.get("kind") == "ticker":
                 add(rec.get("id"), rec.get("recv_ms"), rec.get("ticker"), rec.get("payload"))
     for lst in quotes.values():
-        lst.sort()
+        lst.sort(key=lambda q: q[0])
     return quotes, stats
 
 
@@ -166,7 +166,7 @@ def spot_at(ts: list, vals: list, t_ms: int):
 
 def quote_at(quotes: dict, ticker: str, t_ms: int):
     lst = quotes.get(ticker) or []
-    i = bisect.bisect_right(lst, (t_ms, float("inf"), float("inf"))) - 1
+    i = bisect.bisect_right([q[0] for q in lst], t_ms) - 1
     if i < 0 or t_ms - lst[i][0] > QUOTE_MAX_AGE_S * 1000:
         return None
     return lst[i][1], lst[i][2], (t_ms - lst[i][0]) / 1000.0
