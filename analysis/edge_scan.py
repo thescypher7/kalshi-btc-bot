@@ -28,6 +28,7 @@ import math
 import os
 import sqlite3
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from statistics import mean, stdev
 
@@ -115,7 +116,7 @@ def build_rows(markets: dict, ts: list, vals: list, quotes: dict) -> list:
             _, bid, ask = qs[i]
             if bid is None or ask is None:
                 continue
-            rows.append({"mkt": idx, "ticker": ticker, "secs_left": secs, "spot": spot, "strike": strike,
+            rows.append({"mkt": idx, "ticker": ticker, "close_ms": close_ms, "secs_left": secs, "spot": spot, "strike": strike,
                          "sigma": sigma, "p": model_prob(spot, strike, sigma, secs, known_mean),
                          "bid": bid, "ask": ask, "mid": (bid + ask) / 2, "quote_age_s": (t_ms - qts[i]) / 1000.0,
                          "outcome": 1 if yes else 0})
@@ -181,6 +182,31 @@ def blend_out_of_sample(rows: list):
     for r, w in scored:
         per.setdefault(r["mkt"], []).append((r["mid"] - r["outcome"]) ** 2 - (w * r["p"] + (1 - w) * r["mid"] - r["outcome"]) ** 2)
     return wa, wb, cluster_stat([mean(v) for v in per.values()])
+
+
+def split_halves(rows: list):
+    """Rows of the first and second half of the markets in time order, or None if there are too few markets."""
+    ids = sorted({r["mkt"] for r in rows})
+    if len(ids) < 4:
+        return None
+    cut = ids[len(ids) // 2]
+    return [r for r in rows if r["mkt"] < cut], [r for r in rows if r["mkt"] >= cut]
+
+
+def gap_by_block(rows: list, block_hours: float = 6.0, lo: float = 0.15, hi: float = 0.85) -> list:
+    """Calibration gap (actual Yes rate minus mid, mids in [lo, hi)) per block of clock time, by market close time.
+    Returns [(block_start_utc_text, markets, gap, se)] so a stretch of unusual market behaviour stands out."""
+    size = int(block_hours * 3600 * 1000)
+    blocks: dict = {}
+    for r in rows:
+        if lo <= r["mid"] < hi and r.get("close_ms") is not None:
+            blocks.setdefault(r["close_ms"] // size, []).append(r)
+    out = []
+    for b in sorted(blocks):
+        n, g, se = cluster_stat(per_market_mean(blocks[b], lambda r: r["outcome"] - r["mid"]))
+        start = datetime.fromtimestamp(b * size / 1000, tz=timezone.utc).strftime("%m-%d %H:%MZ")
+        out.append((start, n, g, se))
+    return out
 
 
 def first_signal_trades(rows: list, min_edge: float, secs_range=None, age_range=None) -> list:
@@ -259,6 +285,11 @@ def summarize(rows: list, info: dict, min_edge: float = 0.03) -> str:
                    f"{pm(halves[0][1], halves[0][2], 100, 1, 'c')} ({halves[0][0]} markets)  /  "
                    f"{pm(halves[1][1], halves[1][2], 100, 1, 'c')} ({halves[1][0]} markets)")
 
+    blocks = gap_by_block(rows)
+    if blocks:
+        out.append("  calibration gap (mids 15-85c) by 6-hour block of close time, UTC:")
+        for start, n, g, se in blocks:
+            out.append(f"    {start}  markets {n:>3}  gap {pm(g, se, 100, 1, 'c')}")
     out.append("\n2. Does the model beat the market price?  (Brier gain = market error minus model error; positive = model better)")
     n, g, se = brier_delta(rows, lambda r: r["p"])
     out.append(f"  all rows: model {mean((r['p'] - r['outcome']) ** 2 for r in rows):.4f}  market {mean((r['mid'] - r['outcome']) ** 2 for r in rows):.4f}"
@@ -268,6 +299,13 @@ def summarize(rows: list, info: dict, min_edge: float = 0.03) -> str:
         if rs:
             n, g, se = brier_delta(rs, lambda r: r["p"])
             out.append(f"  {hi // 60:>2}:{hi % 60:02d} to {lo // 60:>2}:{lo % 60:02d} left: gain {pm(g, se, 1000, 1, 'e-3')}  ({n} markets)")
+    halves2 = split_halves(rows)
+    if halves2:
+        parts = []
+        for h in halves2:
+            n, g, se = brier_delta(h, lambda r: r["p"])
+            parts.append(f"{pm(g, se, 1000, 1, 'e-3')} ({n} markets)")
+        out.append(f"  model Brier gain, first half / second half of the markets: {parts[0]}  /  {parts[1]}")
     oos = blend_out_of_sample(rows)
     if oos:
         wa, wb, (n, g, se) = oos
@@ -277,6 +315,14 @@ def summarize(rows: list, info: dict, min_edge: float = 0.03) -> str:
     out.append(f"\n3. Simulated taker trades, one per market (buy at the ask when edge after fee exceeds the threshold)")
     for t in THRESHOLDS:
         out.append(trade_line(f"edge > {t * 100:.0f}c, whole window", first_signal_trades(rows, t)))
+    whole = first_signal_trades(rows, min_edge)
+    out.append(f"  by side bought (edge > {min_edge * 100:.0f}c, whole window):")
+    for side in ("yes", "no"):
+        out.append(trade_line(f"bought {side.capitalize()}", [t for t in whole if t[1] == side]))
+    if halves2:
+        out.append(f"  by half of the markets (edge > {min_edge * 100:.0f}c, whole window):")
+        for label, h in (("first half", halves2[0]), ("second half", halves2[1])):
+            out.append(trade_line(label, first_signal_trades(h, min_edge)))
     out.append(f"  by time left (edge > {min_edge * 100:.0f}c):")
     for hi, lo in TIME_BUCKETS:
         out.append(trade_line(f"{hi // 60}:{hi % 60:02d} to {lo // 60}:{lo % 60:02d} left", first_signal_trades(rows, min_edge, secs_range=(hi, lo))))

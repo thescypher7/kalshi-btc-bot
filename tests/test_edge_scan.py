@@ -137,3 +137,28 @@ def test_trades_report_which_side_was_bought_and_base_rate_is_printed():
     text = es.summarize(rows, {"markets": 3, "ticks": 1, "quotes": 1, "yes_markets": 1, "btc_first": 100000.0, "btc_last": 99000.0})
     assert "Yes won 1 of 3 settled markets (33%)" in text and "from 100,000 to 99,000" in text
     assert "first half / second half" in text or "same gap" not in text      # needs >= 4 markets for the halves line
+
+
+H = 3600 * 1000
+
+
+def test_gap_by_block_localises_a_bad_stretch():
+    rows = []
+    for i, y in enumerate([1, 0, 1, 0, 0, 0, 0, 0]):            # 4 markets in block 1, then 4 losing markets in block 2
+        for k in range(2):
+            rows.append({"mkt": i, "ticker": f"T{i}", "close_ms": (i // 4) * 6 * H + i * 1000, "secs_left": 300 - k,
+                         "p": 0.5, "mid": 0.5, "bid": 0.49, "ask": 0.51, "quote_age_s": 1.0, "outcome": y})
+    blocks = es.gap_by_block(rows)
+    assert [b[1] for b in blocks] == [4, 4] and abs(blocks[0][2]) < 1e-9 and abs(blocks[1][2] + 0.5) < 1e-9
+    assert blocks[0][0].endswith("00:00Z") and blocks[1][0].endswith("06:00Z")
+
+
+def test_report_has_time_split_sections():
+    rows = rows_for([(0.9, 0.5, 1), (0.1, 0.5, 0), (0.9, 0.5, 1), (0.1, 0.5, 0)] * 2)
+    for r in rows:
+        r["close_ms"] = r["mkt"] * 4 * H
+    text = es.summarize(rows, {"markets": 8, "ticks": 1, "quotes": 1})
+    for needle in ("by 6-hour block", "model Brier gain, first half / second half", "by side bought", "bought Yes", "bought No",
+                   "by half of the markets", "first half", "second half"):
+        assert needle in text, needle
+    assert es.split_halves(rows_for([(0.5, 0.5, 1)])) is None
