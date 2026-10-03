@@ -118,3 +118,10 @@ sudo -u kalshi /opt/kalshi-bot/venv/bin/python /opt/kalshi-bot/analysis/validate
 ```
 python3 -m venv venv && venv/bin/pip install -r requirements.txt && venv/bin/pytest -q
 ```
+
+### First look at edge
+```
+sudo -u kalshi /opt/kalshi-bot/venv/bin/python /opt/kalshi-bot/analysis/edge_probe.py --db /var/lib/kalshi-bot/kalshi_log.sqlite
+```
+Compares a simple fair-value model (spot vs strike, recent volatility) with Kalshi's own quotes at 10/7/5/3 minutes
+before close, and simulates taker trades after fees. A smoke test on a small sample, not proof of edge.
