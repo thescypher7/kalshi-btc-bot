@@ -143,4 +143,5 @@ sudo -u kalshi nice -n 19 /opt/kalshi-bot/venv/bin/python /opt/kalshi-bot/analys
 Samples every 10 s before close and asks: is Kalshi's mid-price calibrated, does the model add information beyond it
 (fitted on half the markets, scored on the other half), and how do simulated taker trades do by time left and quote
 age. Standard errors are clustered by market. `--cache` makes reruns take seconds; add `--refresh` to rebuild it
-from newer data.
+from newer data. `--since 2026-10-03T00:00` uses only markets closing after that UTC time, so an idea can be tested
+on data logged after it was formed (the honest way to check a pattern spotted in hindsight).
