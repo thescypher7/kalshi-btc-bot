@@ -265,3 +265,15 @@ def test_extract_core_command_line(tmp_path, capsys):
     write_raw_gz(arch / "raw_20261001T05.jsonl.gz", [rec(1, "orderbook_delta"), rec(2, "ticker")])
     assert rt.main(["--db", str(tmp_path / "x.sqlite"), "--extract-core"]) == 0
     assert "extract-core done: 1 rows" in capsys.readouterr().out
+
+
+def test_cli_refuses_a_missing_database_instead_of_creating_one(tmp_path, capsys):
+    missing = tmp_path / "nope.sqlite"
+    assert rt.main(["--db", str(missing)]) == 2
+    assert "no database at" in capsys.readouterr().err
+    assert not missing.exists()                                   # sqlite would silently create an empty one
+
+
+def test_extract_core_refuses_a_missing_archive_folder(tmp_path, capsys):
+    assert rt.main(["--db", str(tmp_path / "x.sqlite"), "--extract-core"]) == 2
+    assert "no archive folder" in capsys.readouterr().err
