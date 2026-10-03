@@ -133,7 +133,7 @@ def load_quotes(db: sqlite3.Connection, archive_dir: Path):
 
     for row in db.execute("SELECT rowid, recv_ms, ticker, payload FROM raw WHERE kind='ticker'"):
         add(*row)
-    for p in vs.archive_files(archive_dir, "raw"):
+    for p in vs.raw_source_files(archive_dir):
         for rec in vs.read_archive(p, must_contain='"kind":"ticker"'):
             if rec.get("kind") == "ticker":
                 add(rec.get("id"), rec.get("recv_ms"), rec.get("ticker"), rec.get("payload"))
@@ -277,8 +277,9 @@ def main(argv=None) -> int:
     ap.add_argument("--csv", help="also write one row per market/checkpoint to this file")
     a = ap.parse_args(argv)
     archive = vs.resolve_archive_dir(a.db, a.archive_dir)
-    print(f"Read: {a.db} + {len(vs.archive_files(archive, 'raw'))} raw / {len(vs.archive_files(archive, 'brti'))} "
-          f"brti archive files in {archive}")
+    fast = " (core files only)" if (archive / vs.CORE_MARKER).exists() else ""
+    print(f"Read: {a.db} + {len(vs.raw_source_files(archive))} raw / {len(vs.archive_files(archive, 'brti'))} "
+          f"brti archive files in {archive}{fast}")
     rows, info = analyze(a.db, archive)
     print(summarize(rows, info, a.min_edge))
     if a.csv and rows:
