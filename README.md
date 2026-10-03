@@ -134,3 +134,13 @@ sudo -u kalshi /opt/kalshi-bot/venv/bin/python /opt/kalshi-bot/analysis/edge_pro
 ```
 Compares a simple fair-value model (spot vs strike, recent volatility) with Kalshi's own quotes at 10/7/5/3 minutes
 before close, and simulates taker trades after fees. A smoke test on a small sample, not proof of edge.
+
+### Second edge scan
+```
+sudo -u kalshi nice -n 19 /opt/kalshi-bot/venv/bin/python /opt/kalshi-bot/analysis/edge_scan.py \
+  --db /var/lib/kalshi-bot/kalshi_log.sqlite --cache /var/lib/kalshi-bot/edge_cache.json.gz
+```
+Samples every 10 s before close and asks: is Kalshi's mid-price calibrated, does the model add information beyond it
+(fitted on half the markets, scored on the other half), and how do simulated taker trades do by time left and quote
+age. Standard errors are clustered by market. `--cache` makes reruns take seconds; add `--refresh` to rebuild it
+from newer data.
