@@ -119,3 +119,21 @@ def test_quote_lookup_survives_two_quotes_in_the_same_millisecond():
     quotes = {"T": [(1000, None, 0.5), (1000, 0.4, None), (2000, 0.45, 0.55)]}
     assert ep.quote_at(quotes, "T", 1500)[:2] in ((None, 0.5), (0.4, None))
     assert ep.quote_at(quotes, "T", 2500)[:2] == (0.45, 0.55)
+
+
+def test_gap_by_half_separates_a_regime_from_a_steady_bias():
+    # first 4 markets all lose, last 4 all win, every mid is 50c: a regime, not a steady bias
+    regime = rows_for([(0.5, 0.5, 0)] * 4 + [(0.5, 0.5, 1)] * 4)
+    (n1, g1, _), (n2, g2, _) = es.gap_by_half(regime)
+    assert (n1, n2) == (4, 4) and g1 < -0.4 and g2 > 0.4
+    assert es.gap_by_half(rows_for([(0.5, 0.5, 1)])) is None
+
+
+def test_trades_report_which_side_was_bought_and_base_rate_is_printed():
+    rows = rows_for([(0.1, 0.5, 0), (0.1, 0.5, 0), (0.9, 0.5, 1)])
+    trades = es.first_signal_trades(rows, 0.03)
+    assert [side for _, side in trades] == ["no", "no", "yes"]
+    assert "bought No in 2/3" in es.trade_line("x", trades)
+    text = es.summarize(rows, {"markets": 3, "ticks": 1, "quotes": 1, "yes_markets": 1, "btc_first": 100000.0, "btc_last": 99000.0})
+    assert "Yes won 1 of 3 settled markets (33%)" in text and "from 100,000 to 99,000" in text
+    assert "first half / second half" in text or "same gap" not in text      # needs >= 4 markets for the halves line

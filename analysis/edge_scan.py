@@ -183,9 +183,10 @@ def blend_out_of_sample(rows: list):
     return wa, wb, cluster_stat([mean(v) for v in per.values()])
 
 
-def first_signal_pnls(rows: list, min_edge: float, secs_range=None, age_range=None) -> list:
-    """One simulated trade per market: the first row (in time order) whose edge beats `min_edge`."""
-    done, pnls = set(), []
+def first_signal_trades(rows: list, min_edge: float, secs_range=None, age_range=None) -> list:
+    """One simulated trade per market: the first row (in time order) whose edge beats `min_edge`.
+    Returns (pnl, side) pairs, side being "yes" or "no"."""
+    done, trades = set(), []
     for r in rows:
         if r["mkt"] in done:
             continue
@@ -196,22 +197,49 @@ def first_signal_pnls(rows: list, min_edge: float, secs_range=None, age_range=No
         t = ep.best_trade(r, min_edge)
         if t:
             done.add(r["mkt"])
-            pnls.append(ep.trade_pnl(r, t[0], t[1]))
-    return pnls
+            trades.append((ep.trade_pnl(r, t[0], t[1]), t[0]))
+    return trades
 
 
-def trade_line(label: str, pnls: list) -> str:
+def first_signal_pnls(rows: list, min_edge: float, secs_range=None, age_range=None) -> list:
+    return [p for p, _ in first_signal_trades(rows, min_edge, secs_range, age_range)]
+
+
+def trade_line(label: str, trades: list) -> str:
+    """`trades` is a list of (pnl, side) pairs, or plain pnls."""
+    pnls = [t[0] if isinstance(t, tuple) else t for t in trades]
     n = len(pnls)
     if n == 0:
         return f"  {label:<26} no trades"
     se = stdev(pnls) / math.sqrt(n) if n > 1 else None
-    return f"  {label:<26} {n:>4} trades  {pm(mean(pnls), se, 100, 1, 'c'):<20} win {sum(p > 0 for p in pnls)}/{n}"
+    sides = [t[1] for t in trades if isinstance(t, tuple)]
+    split = f"  bought No in {sides.count('no')}/{n}" if sides else ""
+    return f"  {label:<26} {n:>4} trades  {pm(mean(pnls), se, 100, 1, 'c'):<20} win {sum(p > 0 for p in pnls)}/{n}{split}"
+
+
+def gap_by_half(rows: list, lo: float = 0.15, hi: float = 0.85):
+    """Calibration gap (actual Yes rate minus mid) for mids in [lo, hi), for the first and second half of the
+    markets in time order. A real bias should show up in both halves; a market regime shows up in one."""
+    ids = sorted({r["mkt"] for r in rows})
+    if len(ids) < 4:
+        return None
+    cut = ids[len(ids) // 2]
+    out = []
+    for half in ([r for r in rows if r["mkt"] < cut], [r for r in rows if r["mkt"] >= cut]):
+        rs = [r for r in half if lo <= r["mid"] < hi]
+        out.append(cluster_stat(per_market_mean(rs, lambda r: r["outcome"] - r["mid"])))
+    return out
 
 
 # ---------- report ----------
 def summarize(rows: list, info: dict, min_edge: float = 0.03) -> str:
     n_mk = len({r["mkt"] for r in rows})
-    out = [f"Settled markets: {info.get('markets')}   BRTI ticks: {info.get('ticks')}   usable quotes: {info.get('quotes')}",
+    out = [f"Settled markets: {info.get('markets')}   BRTI ticks: {info.get('ticks')}   usable quotes: {info.get('quotes')}"]
+    if info.get("yes_markets") is not None:
+        out.append(f"Yes won {info['yes_markets']} of {info['markets']} settled markets "
+                   f"({100.0 * info['yes_markets'] / max(info['markets'], 1):.0f}%).   "
+                   f"BTC moved from {info['btc_first']:,.0f} to {info['btc_last']:,.0f} over the sample.")
+    out += [
            f"Sample rows (every {STEP_S} s, {SCAN_START_S // 60} min to {SCAN_END_S} s before close, two-sided quote needed): "
            f"{len(rows)} rows from {n_mk} markets"]
     if not rows:
@@ -225,6 +253,11 @@ def summarize(rows: list, info: dict, min_edge: float = 0.03) -> str:
         out.append(f"  mid {c['lo'] * 100:>3.0f}-{c['hi'] * 100:>3.0f}c  rows {c['rows']:>5}  markets {c['markets']:>3}  "
                    f"avg mid {c['avg_mid'] * 100:>5.1f}c  actual Yes {c['win_rate'] * 100:>5.1f}%  gap {pm(c['gap'], c['se'], 100, 1, 'c')}"
                    + ("   (few markets: ignore)" if c["markets"] < 20 else ""))
+    halves = gap_by_half(rows)
+    if halves:
+        out.append("  same gap for mids 15-85c, first half / second half of the markets: "
+                   f"{pm(halves[0][1], halves[0][2], 100, 1, 'c')} ({halves[0][0]} markets)  /  "
+                   f"{pm(halves[1][1], halves[1][2], 100, 1, 'c')} ({halves[1][0]} markets)")
 
     out.append("\n2. Does the model beat the market price?  (Brier gain = market error minus model error; positive = model better)")
     n, g, se = brier_delta(rows, lambda r: r["p"])
@@ -243,13 +276,13 @@ def summarize(rows: list, info: dict, min_edge: float = 0.03) -> str:
 
     out.append(f"\n3. Simulated taker trades, one per market (buy at the ask when edge after fee exceeds the threshold)")
     for t in THRESHOLDS:
-        out.append(trade_line(f"edge > {t * 100:.0f}c, whole window", first_signal_pnls(rows, t)))
+        out.append(trade_line(f"edge > {t * 100:.0f}c, whole window", first_signal_trades(rows, t)))
     out.append(f"  by time left (edge > {min_edge * 100:.0f}c):")
     for hi, lo in TIME_BUCKETS:
-        out.append(trade_line(f"{hi // 60}:{hi % 60:02d} to {lo // 60}:{lo % 60:02d} left", first_signal_pnls(rows, min_edge, secs_range=(hi, lo))))
+        out.append(trade_line(f"{hi // 60}:{hi % 60:02d} to {lo // 60}:{lo % 60:02d} left", first_signal_trades(rows, min_edge, secs_range=(hi, lo))))
     out.append(f"  by quote age (edge > {min_edge * 100:.0f}c; older quotes may be stale):")
     for lo, hi in AGE_BUCKETS:
-        out.append(trade_line(f"quote {lo}-{hi} s old", first_signal_pnls(rows, min_edge, age_range=(lo, hi))))
+        out.append(trade_line(f"quote {lo}-{hi} s old", first_signal_trades(rows, min_edge, age_range=(lo, hi))))
     out.append("\nCaution: a few hundred markets cannot show an edge of a cent or two. Look for results several std errors from zero "
                "that appear in BOTH halves of the data, then confirm with realistic fills before any real money.")
     return "\n".join(out)
@@ -272,6 +305,9 @@ def main(argv=None) -> int:
     print(f"Read: {'cache ' + a.cache if use_cache else a.db + ' + archives in ' + str(archive)}")
     markets, ts, vals, quotes, info = load_inputs(a.db, archive, a.cache, a.refresh)
     rows = build_rows(markets, ts, vals, quotes)
+    if ts:
+        info = {**info, "yes_markets": sum(m.get("result") == "yes" for m in markets.values()),
+                "btc_first": vals[0], "btc_last": vals[-1]}
     print(summarize(rows, info, a.min_edge))
     if a.csv and rows:
         with open(a.csv, "w", newline="") as f:
