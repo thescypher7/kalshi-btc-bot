@@ -116,9 +116,11 @@ def build_rows(markets: dict, ts: list, vals: list, quotes: dict) -> list:
             _, bid, ask = qs[i]
             if bid is None or ask is None:
                 continue
+            past = ep.spot_at(ts, vals, t_ms - 1_800_000)
+            ret30 = (spot - past) / past * 1e4 if past else None          # trailing 30-minute move, in basis points
             rows.append({"mkt": idx, "ticker": ticker, "close_ms": close_ms, "secs_left": secs, "spot": spot, "strike": strike,
                          "sigma": sigma, "p": model_prob(spot, strike, sigma, secs, known_mean),
-                         "bid": bid, "ask": ask, "mid": (bid + ask) / 2, "quote_age_s": (t_ms - qts[i]) / 1000.0,
+                         "bid": bid, "ask": ask, "mid": (bid + ask) / 2, "ret30": ret30, "quote_age_s": (t_ms - qts[i]) / 1000.0,
                          "outcome": 1 if yes else 0})
     return rows
 
@@ -206,6 +208,40 @@ def gap_by_block(rows: list, block_hours: float = 6.0, lo: float = 0.15, hi: flo
         n, g, se = cluster_stat(per_market_mean(blocks[b], lambda r: r["outcome"] - r["mid"]))
         start = datetime.fromtimestamp(b * size / 1000, tz=timezone.utc).strftime("%m-%d %H:%MZ")
         out.append((start, n, g, se))
+    return out
+
+
+def filter_since(rows: list, since_ms: int | None) -> list:
+    return rows if since_ms is None else [r for r in rows if r.get("close_ms", 0) >= since_ms]
+
+
+def trades_by_block(rows: list, min_edge: float, block_hours: float = 6.0) -> list:
+    """[(block_start_utc_text, [(pnl, side)])]: the same one-trade-per-market simulation, per block of close time."""
+    size = int(block_hours * 3600 * 1000)
+    blocks: dict = {}
+    for r in rows:
+        if r.get("close_ms") is not None:
+            blocks.setdefault(r["close_ms"] // size, []).append(r)
+    return [(datetime.fromtimestamp(b * size / 1000, tz=timezone.utc).strftime("%m-%d %H:%MZ"),
+             first_signal_trades(blocks[b], min_edge)) for b in sorted(blocks)]
+
+
+def momentum_groups(rows: list):
+    """Does the trailing 30-minute BTC move predict the outcome beyond the market price?
+    Rows are split into thirds by that move; per third: (label, markets, avg move in bp, gap, se) where
+    gap = actual Yes rate minus mid. Persistence that the market does not price shows as a negative gap in the
+    'down' third and a positive gap in the 'up' third."""
+    rs = [r for r in rows if r.get("ret30") is not None]
+    if len(rs) < 30:
+        return None
+    srt = sorted(r["ret30"] for r in rs)
+    lo, hi = srt[len(srt) // 3], srt[2 * len(srt) // 3]
+    out = []
+    for label, keep in (("trailing 30 min down", lambda x: x < lo), ("roughly flat", lambda x: lo <= x < hi),
+                        ("trailing 30 min up", lambda x: x >= hi)):
+        g = [r for r in rs if keep(r["ret30"])]
+        n, m, se = cluster_stat(per_market_mean(g, lambda r: r["outcome"] - r["mid"]))
+        out.append((label, n, mean(r["ret30"] for r in g) if g else None, m, se))
     return out
 
 
@@ -323,12 +359,23 @@ def summarize(rows: list, info: dict, min_edge: float = 0.03) -> str:
         out.append(f"  by half of the markets (edge > {min_edge * 100:.0f}c, whole window):")
         for label, h in (("first half", halves2[0]), ("second half", halves2[1])):
             out.append(trade_line(label, first_signal_trades(h, min_edge)))
+    blocks_t = trades_by_block(rows, min_edge)
+    if len(blocks_t) > 1:
+        out.append(f"  by 6-hour block of close time (edge > {min_edge * 100:.0f}c):")
+        for start, tr in blocks_t:
+            out.append(trade_line(start, tr))
     out.append(f"  by time left (edge > {min_edge * 100:.0f}c):")
     for hi, lo in TIME_BUCKETS:
         out.append(trade_line(f"{hi // 60}:{hi % 60:02d} to {lo // 60}:{lo % 60:02d} left", first_signal_trades(rows, min_edge, secs_range=(hi, lo))))
     out.append(f"  by quote age (edge > {min_edge * 100:.0f}c; older quotes may be stale):")
     for lo, hi in AGE_BUCKETS:
         out.append(trade_line(f"quote {lo}-{hi} s old", first_signal_trades(rows, min_edge, age_range=(lo, hi))))
+    mom = momentum_groups(rows)
+    if mom:
+        out.append("\n4. Momentum check (EXPLORATORY: idea formed after seeing the data, so only a run with --since on later data counts)")
+        out.append("   gap = actual Yes rate minus Kalshi's mid-price, by the BTC move over the 30 minutes before each sample")
+        for label, n, avg, g, se in mom:
+            out.append(f"  {label:<22} markets {n:>3}  avg move {avg:>+7.1f} bp  gap {pm(g, se, 100, 1, 'c')}")
     out.append("\nCaution: a few hundred markets cannot show an edge of a cent or two. Look for results several std errors from zero "
                "that appear in BOTH halves of the data, then confirm with realistic fills before any real money.")
     return "\n".join(out)
@@ -342,7 +389,12 @@ def main(argv=None) -> int:
     ap.add_argument("--cache", help="gzipped JSON file to save/reuse the loaded data (fast reruns)")
     ap.add_argument("--refresh", action="store_true", help="rebuild --cache from the database")
     ap.add_argument("--csv", help="also write the sample rows to this file")
+    ap.add_argument("--since", help="only use markets closing at or after this UTC time, e.g. 2026-10-03T00:00 "
+                                    "(use it to test an idea on data logged AFTER the idea was formed)")
     a = ap.parse_args(argv)
+    since_ms = None
+    if a.since:
+        since_ms = int(datetime.fromisoformat(a.since).replace(tzinfo=timezone.utc).timestamp() * 1000)
     archive = vs.resolve_archive_dir(a.db, a.archive_dir)
     use_cache = bool(a.cache and Path(a.cache).exists() and not a.refresh)
     if not use_cache and not Path(a.db).is_file():
@@ -350,7 +402,9 @@ def main(argv=None) -> int:
         return 2
     print(f"Read: {'cache ' + a.cache if use_cache else a.db + ' + archives in ' + str(archive)}")
     markets, ts, vals, quotes, info = load_inputs(a.db, archive, a.cache, a.refresh)
-    rows = build_rows(markets, ts, vals, quotes)
+    rows = filter_since(build_rows(markets, ts, vals, quotes), since_ms)
+    if since_ms is not None:
+        print(f"Only markets closing at or after {a.since} UTC.")
     if ts:
         info = {**info, "yes_markets": sum(m.get("result") == "yes" for m in markets.values()),
                 "btc_first": vals[0], "btc_last": vals[-1]}

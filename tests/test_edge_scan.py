@@ -162,3 +162,32 @@ def test_report_has_time_split_sections():
                    "by half of the markets", "first half", "second half"):
         assert needle in text, needle
     assert es.split_halves(rows_for([(0.5, 0.5, 1)])) is None
+
+
+def test_momentum_groups_detect_unpriced_persistence():
+    rows = []
+    for i in range(60):                                       # the more BTC fell in the last 30 min, the more often No won
+        ret = -30 + i                                         # -30 .. +29 bp
+        rows.append({"mkt": i, "ticker": f"T{i}", "close_ms": i * H, "secs_left": 300, "p": 0.5, "mid": 0.5, "bid": 0.49,
+                     "ask": 0.51, "quote_age_s": 1.0, "ret30": float(ret), "outcome": 1 if ret > 0 else 0})
+    down, flat, up = es.momentum_groups(rows)
+    assert down[0] == "trailing 30 min down" and down[3] < -0.3 and up[3] > 0.3 and down[2] < 0 < up[2]
+    assert es.momentum_groups(rows[:10]) is None
+    assert "4. Momentum check" in es.summarize(rows, {"markets": 60, "ticks": 1, "quotes": 1})
+
+
+def test_trades_by_block_and_since_filter():
+    rows = rows_for([(0.9, 0.5, 1), (0.1, 0.5, 0), (0.9, 0.5, 0), (0.1, 0.5, 1)])
+    for r in rows:
+        r["close_ms"] = (r["mkt"] // 2) * 6 * H + r["mkt"] * 1000          # markets 0-1 in block 0, 2-3 in block 1
+    blocks = es.trades_by_block(rows, 0.03)
+    assert [len(tr) for _, tr in blocks] == [2, 2] and all(pnl > 0 for pnl, _ in blocks[0][1])
+    assert all(pnl < 0 for pnl, _ in blocks[1][1])
+    assert len(es.filter_since(rows, 6 * H)) == 6 and es.filter_since(rows, None) == rows
+
+
+def test_cli_since_with_no_later_data(tmp_path, capsys):
+    db = build_db(tmp_path)
+    assert es.main(["--db", db, "--since", "2030-01-01T00:00"]) == 0
+    out = capsys.readouterr().out
+    assert "Only markets closing at or after 2030-01-01T00:00 UTC." in out and "No rows could be built" in out
